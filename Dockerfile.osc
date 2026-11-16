@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1
+# All-in-one Harbor image for Eyevinn Open Source Cloud.
+# Components: core, jobservice, registryctl, registry (goharbor/distribution),
+# portal (static, served by nginx) and nginx reverse proxy.
+# Build from the repository root:  docker build -f Dockerfile.osc -t harbor-osc .
+
+ARG GO_IMAGE=golang:1.27.3
+ARG NODE_IMAGE=node:22.22.3
+ARG RUNTIME_IMAGE=debian:trixie-slim
+
+# ---------------------------------------------------------------- Go binaries
+FROM ${GO_IMAGE} AS gobuild
+ARG HARBOR_VERSION=v2.15.5
+ARG GITCOMMIT=8c17ef6e
+ARG GOBUILDTAGS="include_oss include_gcs"
+ENV CGO_ENABLED=0 GOFLAGS=-buildvcs=false
+WORKDIR /harbor
+COPY src ./src
+# The REST API server code is generated from the swagger spec (Makefile: gen_apis)
+ARG SWAGGER_VERSION=v0.33.1
+COPY api/v2.0/swagger.yaml ./api/v2.0/swagger.yaml
+COPY tools/swagger/templates ./tools/swagger/templates
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    GOBIN=/go/bin go install github.com/go-swagger/go-swagger/cmd/swagger@${SWAGGER_VERSION} \
+ && find src/server/v2.0/models src/server/v2.0/restapi -type f ! -name 'zz_generated_placeholder.go' -delete \
+ && swagger generate server --template-dir=tools/swagger/templates --exclude-main \
+      --additional-initialism=CVE --additional-initialism=GC --additional-initialism=OIDC \
+      -f api/v2.0/swagger.yaml -A harbor --target src/server/v2.0
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    cd src/core && go build -tags "${GOBUILDTAGS}" \
+      --ldflags "-w -s -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=${HARBOR_VERSION}" \
+      -o /out/harbor_core . \
+ && cd ../jobservice && go build -tags "${GOBUILDTAGS}" --ldflags "-w -s" -o /out/harbor_jobservice . \
+ && cd ../registryctl && go build -tags "${GOBUILDTAGS}" --ldflags "-w -s" -o /out/harbor_registryctl .
+
+# ------------------------------------------- registry (goharbor/distribution)
+# Version taken from Makefile REGISTRY_SRC_TAG at release v2.15.5
+FROM ${GO_IMAGE} AS registrybuild
+ARG REGISTRY_SRC_TAG=v2.8.3-harbor.4
+ARG DISTRIBUTION_SRC=https://github.com/goharbor/distribution.git
+ENV DISTRIBUTION_DIR=/go/src/github.com/docker/distribution \
+    BUILDTAGS="include_oss include_gcs" \
+    GO111MODULE=auto
+RUN git clone --depth 1 -b ${REGISTRY_SRC_TAG} ${DISTRIBUTION_SRC} ${DISTRIBUTION_DIR}
+WORKDIR ${DISTRIBUTION_DIR}
+RUN CGO_ENABLED=0 make PREFIX=/go clean binaries
+
+# --------------------------------------------------------------------- portal
+FROM ${NODE_IMAGE} AS portalbuild
+WORKDIR /build_dir
+ENV NODE_OPTIONS=--max_old_space_size=4096
+COPY api/v2.0/swagger.yaml /build_dir/swagger.yaml
+COPY src/portal /build_dir
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --unsafe-perm --ignore-scripts --no-optional --no-audit --no-fund --loglevel=error
+RUN npm run postinstall
+RUN npm run generate-build-timestamp
+RUN node --max_old_space_size=2048 node_modules/@angular/cli/bin/ng build --configuration production
+RUN node -e "const yaml = require('js-yaml'); const fs = require('fs'); const swagger = yaml.load(fs.readFileSync('swagger.yaml', 'utf8')); fs.writeFileSync('swagger.json', JSON.stringify(swagger));"
+COPY LICENSE /build_dir/dist/LICENSE
+RUN --mount=type=cache,target=/root/.npm \
+    cd app-swagger-ui && npm ci --unsafe-perm --no-optional --no-audit --no-fund --loglevel=error
+RUN cd app-swagger-ui && npm run build
+
+# -------------------------------------------------------------------- runtime
+FROM ${RUNTIME_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bash nginx-light apache2-utils openssl ca-certificates tzdata tini util-linux \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -r -g 10000 harbor \
+ && useradd --no-log-init -r -m -g 10000 -u 10000 harbor \
+ && mkdir -p /harbor /usr/share/harbor-portal /run/harbor /data \
+ && chown 10000:10000 /run/harbor /data
+
+COPY --from=gobuild /out/harbor_core /harbor/harbor_core
+COPY --from=gobuild /out/harbor_jobservice /harbor/harbor_jobservice
+COPY --from=gobuild /out/harbor_registryctl /harbor/harbor_registryctl
+COPY --from=registrybuild /go/src/github.com/docker/distribution/bin/registry /usr/bin/registry_DO_NOT_USE_GC
+COPY src/core/views /harbor/views
+COPY make/migrations /harbor/migrations
+COPY icons /harbor/icons
+COPY --from=portalbuild /build_dir/dist /usr/share/harbor-portal
+COPY --from=portalbuild /build_dir/swagger.json /usr/share/harbor-portal/swagger.json
+COPY --from=portalbuild /build_dir/app-swagger-ui/dist /usr/share/harbor-portal
+
+COPY --chmod=755 osc-entrypoint.sh /usr/local/bin/osc-entrypoint.sh
+COPY --chmod=755 osc-supervisor.sh /usr/local/bin/osc-supervisor.sh
+
+WORKDIR /harbor
+ENV HARBOR_VERSION=v2.15.5
+VOLUME ["/data"]
+EXPOSE 8080
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/osc-entrypoint.sh"]
+CMD ["/usr/local/bin/osc-supervisor.sh"]
