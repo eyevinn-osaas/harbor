@@ -14,7 +14,8 @@ SECRET_DIR="$DATA_DIR/secret"
 HARBOR_UID=10000
 HARBOR_GID=10000
 
-# Internal (loopback) ports. Only nginx listens on $PORT.
+# Internal ports. All daemons bind 127.0.0.1 only (core: beego httpaddr, registry: http.addr,
+# registryctl/jobservice: OSC_BIND_ADDR, see OSC-PATCHES.md). Only nginx listens on $PORT.
 CORE_PORT=8081
 REGISTRYCTL_PORT=8083
 JOBSERVICE_PORT=8084
@@ -275,7 +276,7 @@ emit CSRF_KEY "$CSRF_KEY"
 emit ROBOT_SCANNER_NAME_PREFIX "$SCAN_ROBOT_PREFIX"
 emit PERMITTED_REGISTRY_TYPES_FOR_PROXY_CACHE "docker-hub,harbor,azure-acr,ali-acr,aws-ecr,google-gcr,docker-registry,github-ghcr,jfrog-artifactory"
 emit REPLICATION_ADAPTER_WHITELIST "ali-acr,aws-ecr,azure-acr,docker-hub,docker-registry,github-ghcr,google-gcr,harbor,huawei-SWR,jfrog-artifactory,tencent-tcr,volcengine-cr"
-emit HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS "${HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS:-true}"
+emit HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS "${HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS:-false}"
 emit CONTENT_TRUST_LEGACY_SIGNER_PULL_ENABLED false
 emit PORT "$CORE_PORT"
 [ -n "$HTTP_PROXY" ]  && emit HTTP_PROXY "$HTTP_PROXY"
@@ -294,6 +295,7 @@ EOF
 ENVFILE="$RUN_DIR/registryctl/env"; : > "$ENVFILE"; chmod 600 "$ENVFILE"
 emit CORE_SECRET "$CORE_SECRET"
 emit JOBSERVICE_SECRET "$JOBSERVICE_SECRET"
+emit OSC_BIND_ADDR 127.0.0.1
 
 # --- registry (distribution)
 htpasswd -bcB "$RUN_DIR/registry/passwd" "$REGISTRY_USER" "$REGISTRY_PASSWORD" >/dev/null 2>&1 || die "htpasswd failed"
@@ -357,8 +359,6 @@ redis:
 http:
   addr: 127.0.0.1:$REGISTRY_PORT
   secret: $(yq "$REGISTRY_HTTP_SECRET")
-  debug:
-    addr: localhost:5001
 auth:
   htpasswd:
     realm: harbor-registry-basic-realm
@@ -405,13 +405,14 @@ EOF
 ENVFILE="$RUN_DIR/jobservice/env"; : > "$ENVFILE"; chmod 600 "$ENVFILE"
 emit CORE_SECRET "$CORE_SECRET"
 emit JOBSERVICE_SECRET "$JOBSERVICE_SECRET"
+emit OSC_BIND_ADDR 127.0.0.1
 emit REGISTRY_URL "http://127.0.0.1:$REGISTRY_PORT"
 emit CORE_URL "http://127.0.0.1:$CORE_PORT"
 emit REGISTRY_CONTROLLER_URL "http://127.0.0.1:$REGISTRYCTL_PORT"
 emit JOBSERVICE_WEBHOOK_JOB_MAX_RETRY 3
 emit JOBSERVICE_WEBHOOK_JOB_HTTP_CLIENT_TIMEOUT 3
 emit LOG_LEVEL "$LOG_LEVEL"
-emit HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS "${HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS:-true}"
+emit HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS "${HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS:-false}"
 emit REGISTRY_CREDENTIAL_USERNAME "$REGISTRY_USER"
 emit REGISTRY_CREDENTIAL_PASSWORD "$REGISTRY_PASSWORD"
 [ -n "$HTTP_PROXY" ]  && emit HTTP_PROXY "$HTTP_PROXY"

@@ -48,7 +48,7 @@ Not included in this build: Trivy scanner, metrics exporter, log container, in-c
 | `S3_ENDPOINT`, `S3_REGION`, `S3_SECURE`, `S3_SKIP_VERIFY`, `S3_FORCE_PATH_STYLE`, `S3_ROOT_DIRECTORY`, `S3_REDIRECT` | no | no | S3 details. Defaults: region `us-east-1`, secure `true`, path style `true`, redirect `false` (registry proxies blobs). |
 | `HARBOR_SECRET_KEY` (16 chars), `HARBOR_CORE_SECRET`, `HARBOR_JOBSERVICE_SECRET`, `HARBOR_CSRF_KEY` (32 chars), `HARBOR_REGISTRY_HTTP_SECRET`, `HARBOR_TOKEN_PRIVATE_KEY` (PEM) | no | yes | Generated on first start and persisted under `/data/secret` unless provided. **Back up `/data/secret/secretkey` or set `HARBOR_SECRET_KEY`: it encrypts credentials stored in the database.** |
 | `MAX_JOB_WORKERS` | no | no | Jobservice workers, default 10. |
-| `HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS` | no | no | Allow replication/webhooks to private networks, default `true`. |
+| `HARBOR_ALLOW_PRIVATE_NETWORK_ACCESS` | no | no | Allow webhook and notification targets on private/internal addresses (loopback, RFC1918, link-local). Default `false`: such targets are rejected. In Harbor v2.15.5 this guard covers webhooks and notification jobs only; replication and proxy-cache endpoints are not restricted by it, so reaching OSC-internal registries from those works without this flag. |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | no | maybe | Outbound proxy for core and jobservice. |
 
 Persistent data lives in `/data` (`registry`, `job_logs`, `secret`).

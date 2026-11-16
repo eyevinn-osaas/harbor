@@ -53,7 +53,7 @@ type RegistryCtl struct {
 // Start the registry controller
 func (s *RegistryCtl) Start() {
 	regCtl := &http.Server{
-		Addr:      ":" + s.ServerConf.Port,
+		Addr:      os.Getenv("OSC_BIND_ADDR") + ":" + s.ServerConf.Port, // OSC patch: optional bind address
 		Handler:   s.Handler,
 		TLSConfig: common_http.NewServerTLSConfig(),
 	}

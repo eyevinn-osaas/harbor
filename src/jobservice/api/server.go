@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	commonhttp "github.com/goharbor/harbor/src/common/http"
@@ -65,7 +66,7 @@ func NewServer(ctx context.Context, router Router, cfg ServerConfig) *Server {
 	}
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Addr:         fmt.Sprintf("%s:%d", os.Getenv("OSC_BIND_ADDR"), cfg.Port), // OSC patch: optional bind address
 		Handler:      http.HandlerFunc(router.ServeHTTP),
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
