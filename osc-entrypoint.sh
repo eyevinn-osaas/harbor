@@ -23,6 +23,7 @@ REGISTRY_PORT=5000
 
 PORT="${PORT:-8080}"
 [[ "$PORT" =~ ^[0-9]+$ ]] || die "PORT must be a number, got '$PORT'"
+case "$PORT" in "$CORE_PORT"|"$REGISTRYCTL_PORT"|"$JOBSERVICE_PORT"|"$REGISTRY_PORT") die "PORT $PORT clashes with an internal Harbor port ($CORE_PORT, $REGISTRYCTL_PORT, $JOBSERVICE_PORT, $REGISTRY_PORT)" ;; esac
 
 # ---------------------------------------------------------------- helpers
 url_decode() {
@@ -296,6 +297,8 @@ ENVFILE="$RUN_DIR/registryctl/env"; : > "$ENVFILE"; chmod 600 "$ENVFILE"
 emit CORE_SECRET "$CORE_SECRET"
 emit JOBSERVICE_SECRET "$JOBSERVICE_SECRET"
 emit OSC_BIND_ADDR 127.0.0.1
+# registryctl lets $PORT override its config port, and the platform sets PORT=8080 for nginx
+emit PORT "$REGISTRYCTL_PORT"
 
 # --- registry (distribution)
 htpasswd -bcB "$RUN_DIR/registry/passwd" "$REGISTRY_USER" "$REGISTRY_PASSWORD" >/dev/null 2>&1 || die "htpasswd failed"
@@ -406,6 +409,7 @@ ENVFILE="$RUN_DIR/jobservice/env"; : > "$ENVFILE"; chmod 600 "$ENVFILE"
 emit CORE_SECRET "$CORE_SECRET"
 emit JOBSERVICE_SECRET "$JOBSERVICE_SECRET"
 emit OSC_BIND_ADDR 127.0.0.1
+emit PORT "$JOBSERVICE_PORT"
 emit REGISTRY_URL "http://127.0.0.1:$REGISTRY_PORT"
 emit CORE_URL "http://127.0.0.1:$CORE_PORT"
 emit REGISTRY_CONTROLLER_URL "http://127.0.0.1:$REGISTRYCTL_PORT"
@@ -542,12 +546,21 @@ http {
 EOF
 
 # --------------------------------------------- ownership and privilege drop
+cat > "$RUN_DIR/ports.env" <<EOF
+NGINX_PORT=$PORT
+REGISTRY_PORT=$REGISTRY_PORT
+REGISTRYCTL_PORT=$REGISTRYCTL_PORT
+CORE_PORT=$CORE_PORT
+JOBSERVICE_PORT=$JOBSERVICE_PORT
+HARBOR_PORT_TIMEOUT=${HARBOR_PORT_TIMEOUT:-60}
+HARBOR_CORE_START_TIMEOUT=${HARBOR_CORE_START_TIMEOUT:-300}
+EOF
 export HOME=/home/harbor
 # Everything is rendered into $RUN_DIR; keep the container environment from leaking
 # into the daemons (the registry in particular treats REGISTRY_* variables as config overrides).
 for v in $(compgen -e); do
   case "$v" in
-    DATABASE_URL|REDIS_URL|HARBOR_*|S3_*|STORAGE_BACKEND|REGISTRY_*|POSTGRESQL_*|MAX_JOB_WORKERS|LOG_LEVEL|OSC_HOSTNAME) unset "$v" ;;
+    DATABASE_URL|REDIS_URL|HARBOR_*|S3_*|STORAGE_BACKEND|REGISTRY_*|POSTGRESQL_*|MAX_JOB_WORKERS|LOG_LEVEL|OSC_HOSTNAME|PORT) unset "$v" ;;
   esac
 done
 if [ "$(id -u)" = "0" ]; then
